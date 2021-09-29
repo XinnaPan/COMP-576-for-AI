@@ -1,4 +1,5 @@
 __author__ = 'tan_nguyen'
+from abc import ABCMeta, abstractmethod
 import numpy as np
 from sklearn import datasets, linear_model
 import matplotlib.pyplot as plt
@@ -27,6 +28,7 @@ def plot_decision_boundary(pred_func, X, y):
     # Generate a grid of points with distance h between them
     xx, yy = np.meshgrid(np.arange(x_min, x_max, h), np.arange(y_min, y_max, h))
     # Predict the function value for the whole gid
+
     Z = pred_func(np.c_[xx.ravel(), yy.ravel()])
     Z = Z.reshape(xx.shape)
     # Plot the contour and training examples
@@ -44,6 +46,7 @@ class NeuralNetwork(object):
     """
     This class builds and trains a neural network
     """
+
     def __init__(self, nn_input_dim, nn_hidden_dim , nn_output_dim, actFun_type='tanh', reg_lambda=0.01, seed=0):
         '''
         :param nn_input_dim: input dimension
@@ -61,9 +64,9 @@ class NeuralNetwork(object):
         
         # initialize the weights and biases in the network
         np.random.seed(seed)
-        self.W1 = np.random.randn(self.nn_input_dim, self.nn_hidden_dim) / np.sqrt(self.nn_input_dim)
-        self.b1 = np.zeros((1, self.nn_hidden_dim))
-        self.W2 = np.random.randn(self.nn_hidden_dim, self.nn_output_dim) / np.sqrt(self.nn_hidden_dim)
+        self.W1 = np.random.randn(self.nn_input_dim, self.nn_hidden_dim[0]) / np.sqrt(self.nn_input_dim)
+        self.b1 = np.zeros((1, self.nn_hidden_dim[0]))
+        self.W2 = np.random.randn(self.nn_hidden_dim[0], self.nn_output_dim) / np.sqrt(self.nn_hidden_dim[0])
         self.b2 = np.zeros((1, self.nn_output_dim))
 
     def actFun(self, z, type):
@@ -78,10 +81,13 @@ class NeuralNetwork(object):
 
         if type == 'tanh' :
             a = (np.exp(z)-np.exp(-z)) / (np.exp(z)+np.exp(-z))
+
         elif type == 'sigmoid' :
             a = 1.0/(1.0+np.exp(-z))
         elif type == 'relu':
-            a = max(0.0,z)
+            mask = (z <= 0)
+            a= z.copy()
+            a[mask] = 0
         return a
 
     def diff_actFun(self, z, type):
@@ -97,32 +103,27 @@ class NeuralNetwork(object):
         if type == 'tanh' :
             return 1-pow(a,2)
         elif type == 'sigmoid':
-            return a(1-a)
+            return a*(1-a)
         elif type == 'relu':
-            if z < 0 :
-                a=0
-            elif z >= 0:
-                a=1
-
+            mask = (z >= 0)
+            a[mask]=1
+            mask = (z<0)
+            a[mask]=0
 
         return a
 
     def softmax(self,y):
-        
-        '''ee=np.exp(y)
-        sum=np.sum(ee)
-        return ee/sum
-        '''
-        c=y.copy()
-        c=c.T
-        c-=np.max(c,axis=0)
-        x=np.exp(c)/np.sum(np.exp(c),axis=0)
-        return x.T
+
+
+        c = y.copy()
+        #c=c.T
+        c -= np.max(c,axis=1,keepdims=True)
+        x = np.exp(c)/np.sum(np.exp(c),axis=1,keepdims=True)
+        return x
         '''
         y -= np.max(y)
         return np.exp(y)/np.sum(np.exp(y))
         '''
-        
 
     def feedforward(self, X, actFun):
         '''
@@ -186,11 +187,8 @@ class NeuralNetwork(object):
             d=self.probs.copy()
             d[np.arange(num_examples),y] -=1
             d /= num_examples
-
         dW2 = np.dot(self.a1.T,d)
         db2 = np.sum(d,axis=0)
-
-        
         d = np.multiply(np.dot(d,self.W2.T),self.diff_actFun(self.a1,self.actFun_type))
         dW1 = np.dot(X.T,d)
         db1 = np.sum(d,axis=0)
@@ -261,7 +259,7 @@ class Layer:
 
 class DeepNeuralNetwork(NeuralNetwork):
     def __init__(self,nn_input_dim, nn_hidden_dim , nn_output_dim, actFun_type='tanh', reg_lambda=0.01, seed=0):
-        super(DeepNeuralNetwork,self).__init__(nn_input_dim, nn_hidden_dim , nn_output_dim, actFun_type='tanh', reg_lambda=0.01, seed=0)
+        super(DeepNeuralNetwork,self).__init__(nn_input_dim, nn_hidden_dim , nn_output_dim, actFun_type, reg_lambda, seed)
 
         self.seed=seed
         self.params = self.initParams()
@@ -273,27 +271,32 @@ class DeepNeuralNetwork(NeuralNetwork):
         for layers in self.hiddenLayers:
             y = layers.feedforward(y)
             if layers.act == True:
-                y= self.actFun(self.actFun_type)
+                y= actFun(y)
+                layers.Y=y
         y = self.softmax(y)
+
+        self.probs = y.copy()
         return y
 
-    def diff_softmax(self,Y,y):
-        num_examples = y.shape[0]
-        if(Y.size == y.size):
-            d = (Y-y) / num_examples
+    def diff_softmax(self,X,y):
+        num_examples = len(X)
+        if(self.probs.size == y.size):
+            d = (self.probs-y) / num_examples
         else:
-            d = Y.copy()
+            d = self.probs.copy()
             d[np.arange(num_examples),y] -=1
             d /= num_examples
         return d
 
-    def backprop(self, Y, y):
-        d = self.diff_softmax(Y,y)
-        # Reverse order for derivation of each parameter of the hidden layer
+    def backprop(self, X, y):
+        d = self.diff_softmax(X,y)
         for index in range(len(self.hiddenLayers)-1, -1, -1):
-            if self.hiddenLayers[index].act == True :
-                d = d * self.diff_actFun(self.hiddenLayers[index].Y,self.actFun_type)                
-            d = self.hiddenLayers[index].backprop(d)
+            if self.hiddenLayers[index].act == False :
+                d = self.hiddenLayers[index].backprop(d)
+            else :
+                d = d * self.diff_actFun(self.hiddenLayers[index].Y,self.actFun_type)    
+                d = self.hiddenLayers[index].backprop(d)            
+            
               
 
     def calculate_loss(self, Y, y):
@@ -309,32 +312,32 @@ class DeepNeuralNetwork(NeuralNetwork):
         w=[]
         for layers in self.hiddenLayers:
             w.append(layers.weight)
-        data_loss += self.reg_lambda / 2 * (np.sum(np.square(w)))
+
+        sum = 0
+        for arr in w:
+            sum += np.sum(np.square(arr))
+
+        data_loss +=  self.reg_lambda / 2 * sum
         return (1. / num_examples) * data_loss
 
-    def fit_model(self, X, y, epsilon=0.01, num_passes=20000, print_loss=True,lr=0.1):
-        Y = self.feedforward(X,self.actFun_type)
+    def fit_model(self, X, y, epsilon=0.01, num_passes=20000, print_loss=True):
         
-        self.loss=self.calculate_loss(Y,y)
+        for i in range(0, num_passes):
+            Y = self.feedforward(X, lambda x: self.actFun(x, type=self.actFun_type))
+            #print(",,,,,,,,,,,,,,,,,,,,,",Y,y)
+            self.backprop(X,y)
+            for layers in self.hiddenLayers:
+                layers.weight_de += self.reg_lambda * layers.weight
+                
+                layers.weight += -epsilon * layers.weight_de 
+                layers.bias -= layers.bias_de *epsilon
 
-        self.backprop(Y,y)
-        for layer in self.hiddenLayers:
-            layer.weight -= layer.weight_de * lr
-            layer.bias -= layer.bias_de * lr   
-        
-         
+            if print_loss and i % 1000 == 0:
+                print("Loss after iteration %i: %f" % (i, self.calculate_loss(self.probs, y)))
 
-
-        
-
-
-
-    
-
-                   
-            
 
     def initHiddenLayers(self):
+        
         layers=[]
         for index, value in enumerate(self.params):
             weight = value["weight"]
@@ -345,12 +348,13 @@ class DeepNeuralNetwork(NeuralNetwork):
             else:
                 layer = Layer(weight, bias,True)
             layers.append(layer)
+            #print(",,,,,,,,,,,,,,,,,,,,,,,,",weight)
         return layers
 
     def initParams(self):
         params = []
         layerSizeList = [self.nn_input_dim
-                         ] + self.nn_input_dim + [self.nn_output_dim]
+                         ] + self.nn_hidden_dim + [self.nn_output_dim]
         for index, value in enumerate(layerSizeList):
             if (index > 0):
                 prevSize = layerSizeList[index - 1]
@@ -368,32 +372,15 @@ class DeepNeuralNetwork(NeuralNetwork):
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def main():
     # generate and visualize Make-Moons dataset
     X, y = generate_data()
     plt.scatter(X[:, 0], X[:, 1], s=40, c=y, cmap=plt.cm.Spectral)
-    plt.show()
+    #plt.show()
 
-    model = NeuralNetwork(nn_input_dim=2, nn_hidden_dim=3 , nn_output_dim=2, actFun_type='tanh')
+    #model = DeepNeuralNetwork(nn_input_dim=2, nn_hidden_dim= [3] , nn_output_dim=2, actFun_type='tanh')
+    model = NeuralNetwork(nn_input_dim=2, nn_hidden_dim= [3,4] , nn_output_dim=2, actFun_type='sigmoid')
+    
     model.fit_model(X,y)
 
     model.visualize_decision_boundary(X,y)
